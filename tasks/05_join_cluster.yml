@@ -1,0 +1,16 @@
+---
+
+- name: Join Worker Nodes to Cluster
+  shell: "{{ hostvars['variable_holder']['join_command'].stdout }}"
+  when: hostvars['variable_holder']['join_command'] is success
+  register: join_command_status
+  until: join_command_status is success
+  changed_when: false
+  failed_when: join_command_status.rc not in [0, 1]
+
+- name: add variables to dummy host to pass to next task
+  add_host:
+    name: "variable_holder"
+    join_command_status:  "{{ join_command_status }}"
+  changed_when: false
+  when: join_command_status is success

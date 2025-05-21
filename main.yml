@@ -1,0 +1,46 @@
+---
+
+- name: Install Kubernetes on All nodes
+  hosts: all
+  become: true
+  vars_files:
+    - external_vars.yml
+    
+  tasks:
+    - include_tasks: tasks/01_install_k8s.yml
+      when: ansible_distribution == "Ubuntu"
+
+- name: Initiate Kubernetes Cluster, Configure NFS Storage and MetalLB LoadBalancer
+  hosts: Kubernetes_masters
+  vars_files:
+    - external_vars.yml
+
+  tasks:
+
+    - include_tasks: tasks/02_init_k8s_cluster.yml
+      when: ansible_distribution == "Ubuntu"
+
+    - include_tasks: tasks/03_configure_nfs_storage.yml
+      when: ansible_distribution == "Ubuntu"
+    
+    - include_tasks: tasks/04_configure_MetalLB.yml
+      when: ansible_distribution == "Ubuntu"
+
+- name: Join Kubernetes Worker Nodes to Cluster
+  hosts: Kubernetes_workers
+  become: true
+  
+  tasks:
+
+  - include_tasks: tasks/05_join_cluster.yml
+    when: ansible_distribution == "Ubuntu"
+
+- name: Kubernetes Worker Nodes Join Confirmation
+  hosts: Kubernetes_masters
+  vars_files:
+  - external_vars.yml
+  
+  tasks:
+
+  - include_tasks: tasks/06_join_confirmation.yml
+    when: ansible_distribution == "Ubuntu"

@@ -1,0 +1,12 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: metellb-ippool
+  namespace: metallb-system
+spec:
+  addresses:
+  -  {{ metallb_ippool_range }} 
+  
+   
+
+

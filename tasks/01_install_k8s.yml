@@ -1,0 +1,194 @@
+---
+
+- name: Disable swap
+  command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+  register: swap_status
+  until: swap_status is success
+
+- name: Ensure swap is disabled in fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s)'
+    replace: '#\1'
+    backup: yes
+  register: fstab_status
+  until: swap_status is success
+
+- name: Enable IPv4 packet forwarding
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: 1
+    state: present
+    sysctl_set: true
+    reload: yes
+  register: ipv4_forwarding_status
+  until: ipv4_forwarding_status is success
+
+- name: Load kernel module - br_netfilter (for  Flannel CNI)
+  modprobe:
+    name: br_netfilter
+    state: present
+    persistent: present
+  register: br_netfilter_status
+  until: br_netfilter_status is success
+  
+- name: Install containerd into /usr/local
+  unarchive:
+    src: "{{ containerd_download_url }}"
+    dest: /usr/local
+    remote_src: yes
+    creates: /usr/local/bin/containerd
+  register: containerd_install_status
+  until: containerd_install_status is success
+
+- name: create /usr/local/lib/systemd/system directory
+  file:
+    path: /usr/local/lib/systemd/system
+    state: directory
+  register: systemd_dir_status
+  until: systemd_dir_status is success
+
+- name: Download containerd.service file
+  get_url:
+    url: https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+    dest: /usr/local/lib/systemd/system/containerd.service
+  register: containerd_service_status
+  until: containerd_service_status is success
+
+- name: Start containerd.service
+  systemd_service:
+    state: started
+    name: containerd
+    enabled: true
+    daemon_reload: true
+  when: containerd_service_status is changed
+  register: containerd_service_start_status
+  until: containerd_service_start_status is success
+
+- name: Download and install runc Package
+  get_url:
+    url: "{{ runc_download_url }}"
+    dest: /usr/local/sbin/runc
+    mode: 0755
+  register: runc_install_status
+  until: runc_install_status is success
+
+- name: Create /opt/cni/bin directory
+  file:
+    path: /opt/cni/bin
+    state: directory
+    mode: '0755'
+  register: cni_bin_dir_status
+  until: cni_bin_dir_status is success
+
+- name: Install cni-plugins into /opt/cni/bin
+  unarchive:
+    src: "{{ cniplugins_download_url }}"
+    dest: /opt/cni/bin
+    remote_src: yes
+    creates: /opt/cni/bin/README.md
+  register: cni_plugins_install_status
+  until: cni_plugins_install_status is success
+
+- name: Check /etc/containerd/config.toml exists
+  stat: 
+    path:  /etc/containerd/config.toml
+  register: configtoml_status
+  until: configtoml_status is success
+
+- name: Create /etc/containerd directory
+  file:
+    path: /etc/containerd
+    state: directory
+  when: not configtoml_status.stat.exists
+  register: containerd_dir_status
+  until: containerd_dir_status is success
+
+- name: Generate containerd config
+  shell: |
+    containerd config default > /etc/containerd/config.toml
+  when: not configtoml_status.stat.exists
+  register: containerd_config_status
+  until: containerd_config_status is success
+
+- name: Configuring the systemd cgroup driver
+  lineinfile:
+    path: /etc/containerd/config.toml
+    insertafter: "            ShimCgroup = ''"
+    line: '            SystemdCgroup = true'
+    state: present
+    backup: true
+  register: containerd_config_update_status
+  until: containerd_config_update_status is success
+
+- name: Restart containerd.service
+  systemd_service:
+    state: restarted
+    name: containerd
+    enabled: true
+    daemon_reload: true
+  when: containerd_config_update_status is changed
+  register: containerd_service_restart_status
+  until: containerd_service_restart_status is success
+
+- name: Install Pre Requirements Packages
+  apt:
+    pkg: "{{ pre_requirements_packages }}"
+    update_cache: yes
+    state: present
+  register: pre_requirements_status
+  until: pre_requirements_status is success
+
+- name: Add Kubernetes GPG key
+  shell: |
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL {{ kubernetes_gpg_key_url }} | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: kubernetes_gpg_key_status
+  until: kubernetes_gpg_key_status is success
+
+- name: Add Kubernetes Repository
+  lineinfile:
+    path: /etc/apt/sources.list.d/kubernetes.list
+    line: "{{ kubernetes_repo_url }}"
+    state: present
+    create : yes
+  when: kubernetes_gpg_key_status is success
+  register: kubernetes_repo_status
+  until: kubernetes_repo_status is success
+
+- name: Install Kubernetes Packages
+  apt:
+    pkg: "{{ kubernetes_packages }}"
+    update_cache: yes
+    state: present
+  when: kubernetes_repo_status is success
+  register: kubernetes_install_status
+  until: kubernetes_install_status is success
+
+- name: Mark Kubernetes packages to hold
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ kubernetes_packages }}"
+  when: kubernetes_install_status is success
+  register: kubernetes_mark_status
+  until: kubernetes_mark_status is success
+
+- name: Start kubelet
+  systemd_service:
+    state: started
+    name: kubelet
+    enabled: true
+  when: kubernetes_mark_status is success
+  register: kubelet_service_status
+  until: kubelet_service_status is success
+
+- name: add variables to dummy host to pass to next play
+  add_host:
+    name: "variable_holder"
+    kubelet_service_status:  "{{ kubelet_service_status }}"
+  changed_when: false
+  when: kubelet_service_status is success

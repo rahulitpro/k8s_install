@@ -1,0 +1,10 @@
+---
+
+- name: Confirm if Worker Nodes have joined to Cluster
+  shell: kubectl get nodes | grep -v control | grep -c Ready
+  when: hostvars['variable_holder']['join_command_status']  is success
+  register: worker_node_status
+  until: worker_node_status.stdout|int >= worker_node_count|int
+  retries: 10
+  delay: 10
+  changed_when: false

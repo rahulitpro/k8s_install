@@ -1,0 +1,102 @@
+---
+
+- name: Confirm if MetalLB is installed
+  shell: kubectl get pods -n metallb-system | grep Running | grep -c '1/1'
+  register: check_metallb
+  changed_when: false
+  failed_when: check_metallb.rc not in [0, 1]
+  when: hostvars['variable_holder']['nfs_provisioner_status'] is success
+
+- name: Get kube-proxy configmap 
+  shell: kubectl get configmap -n kube-system kube-proxy -o yaml > /tmp/updated-kube-proxy-configmap.yaml
+  args:
+    creates: /tmp/updated-kube-proxy-configmap.yaml
+  when: check_metallb.stdout|int < 2
+  register: kube_proxy_configmap
+  until: kube_proxy_configmap is success
+
+- name: Create updated configmap yaml file for kube-proxy for mode ipvs
+  lineinfile:
+    path: /tmp/updated-kube-proxy-configmap.yaml
+    search_string: '    mode: ""'
+    line: '    mode: "ipvs"'
+  when: kube_proxy_configmap.changed
+  register: kube_proxy_configmap_mode
+  until: kube_proxy_configmap_mode is success
+
+- name: Create updated configmap yaml file for kube-proxy for strictARP
+  lineinfile:
+    path: /tmp/updated-kube-proxy-configmap.yaml
+    search_string: '      strictARP: false'
+    line: '      strictARP: true'
+  when: kube_proxy_configmap.changed
+  register: kube_proxy_configmap_strictarp
+  until: kube_proxy_configmap_strictarp is success
+
+- name: Apply patch for kube proxy ConfigMap
+  shell: kubectl apply -f /tmp/updated-kube-proxy-configmap.yaml
+  when: kube_proxy_configmap.changed
+  register: kube_proxy_configmap_apply
+  until: kube_proxy_configmap_apply is success
+
+- name: Install MetalLB
+  shell: kubectl apply -f {{ metallb_manifests_url }}
+  when: kube_proxy_configmap.changed
+  register: metallb_install
+  until: metallb_install is success
+
+- name: Confirm if MetalLB is installed
+  shell: kubectl get pods -n metallb-system | grep Running | grep -c '1/1'
+  register: metallb_status
+  changed_when: false
+  until: metallb_status.stdout|int >= 2
+  retries: 10
+  delay: 10
+  when: metallb_install.changed
+
+- name: Create Directory to copy ippool.yaml
+  file:
+    path: /tmp/metallb
+    state: directory
+  when: metallb_status is success
+  register: metallb_dir
+  until: metallb_dir is success
+
+- name: Create ippool.yaml file for MetalLB using jinja2
+  template:
+    src: metallb/ippool.j2
+    dest: /tmp/metallb/ippool.yaml
+  when: metallb_dir.changed
+  register: metallb_copy
+  until: metallb_copy is success
+
+- name: Apply create IPPool for MetalLB
+  shell: kubectl create -f /tmp/metallb/ippool.yaml
+  register: metellb_ippool
+  when: metallb_copy.changed
+  until: metellb_ippool is success
+
+- name: add MetalLB Pool IPs in netplan
+  become: true
+  lineinfile: 
+    dest: /etc/netplan/50-cloud-init.yaml
+    insertafter: '{{ ansible_default_ipv4.address }}/24'
+    line: '            - {{ item }}'
+  loop: '{{ MetalLB_pool_ips }}'
+  when: metellb_ippool.changed
+  register: netplan_status
+  until: netplan_status is success
+
+- name: apply netplan
+  become: true
+  shell: netplan apply
+  when: netplan_status.changed
+  register: netplan_apply_status
+  until: netplan_apply_status is success
+
+- name: add variables to dummy host to pass to next task
+  add_host:
+    name: "variable_holder"
+    netplan_apply_status:  "{{ netplan_apply_status }}"
+  changed_when: false
+  when: netplan_apply_status is success

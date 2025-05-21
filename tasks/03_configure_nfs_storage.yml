@@ -1,0 +1,61 @@
+---
+
+- name: Check if NFS Provisioner is running
+  shell: kubectl get pods -n nfs-provisioner  | grep nfs-client-provisioner | grep Running | grep -c '1/1'
+  when: hostvars['variable_holder']['join_command'] is success
+  register: nfs_provisioner_check
+  failed_when: nfs_provisioner_check.rc not in [0, 1]
+  changed_when: false
+
+
+- name: Create Directory to copy Kustomizations for NFS Provisioner
+  file:
+    path: /tmp/nfs_kustomizations
+    state: directory
+  when: nfs_provisioner_check.stdout|int < 1
+  register: nfs_kustomizations_dir
+  until: nfs_kustomizations_dir is success
+
+- name: Copy Kustomizations Files for NFS Provisioner
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+  loop:
+    - { src: 'nfs-subdir-external-provisioner/kustomization.yaml', dest: '/tmp/nfs_kustomizations/kustomization.yaml' }
+    - { src: 'nfs-subdir-external-provisioner/namespace.yaml', dest: '/tmp/nfs_kustomizations/namespace.yaml' }
+  when: nfs_kustomizations_dir is changed
+  register: nfs_kustomizations_copy
+  until: nfs_kustomizations_copy is success
+
+- name: Write Patch NFS Details using jinja2
+  template:
+      src: nfs-subdir-external-provisioner/patch_nfs_details.j2
+      dest: /tmp/nfs_kustomizations/patch_nfs_details.yaml
+  when: nfs_kustomizations_dir is changed
+  register: nfs_kustomizations_patch
+  until: nfs_kustomizations_patch is success
+  
+
+- name: Apply Kustomizations Files for NFS Provisioner
+  shell: kubectl apply -k .
+  args:
+    chdir: '/tmp/nfs_kustomizations/'
+  when: nfs_kustomizations_patch is changed
+  register: nfs_kustomizations_apply
+  until: nfs_kustomizations_apply is success
+
+- name: Confirm if NFS Provisioner is running
+  shell: kubectl get pods -n nfs-provisioner  | grep nfs-client-provisioner | grep Running | grep -c '1/1'
+  when: nfs_kustomizations_apply is changed
+  register: nfs_provisioner_status
+  until: nfs_provisioner_status.stdout|int >= 1
+  retries: 10
+  delay: 10
+  changed_when: false
+
+- name: add variables to dummy host to pass to next task
+  add_host:
+    name: "variable_holder"
+    nfs_provisioner_status:  "{{ nfs_provisioner_status }}"
+  changed_when: false
+  when: nfs_provisioner_status is success

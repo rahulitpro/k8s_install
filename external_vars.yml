@@ -1,0 +1,32 @@
+containerd_download_url: "https://github.com/containerd/containerd/releases/download/v2.1.0/containerd-2.1.0-linux-amd64.tar.gz"
+runc_download_url: "https://github.com/opencontainers/runc/releases/download/v1.3.0/runc.amd64"
+cniplugins_download_url: "https://github.com/containernetworking/plugins/releases/download/v1.7.1/cni-plugins-linux-amd64-v1.7.1.tgz"
+pre_requirements_packages: 
+  - apt-transport-https 
+  - ca-certificates 
+  - curl 
+  - gpg
+  - git
+  - nfs-common
+kubernetes_gpg_key_url: https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key
+kubernetes_repo_url: 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /'
+kubernetes_packages:
+  - kubelet 
+  - kubeadm 
+  - kubectl
+nfs_server_ip: 192.168.2.102  ## Update this to your NFS server IP
+nfs_exported_path: /NFS ## Update this to your NFS exported path
+metallb_manifests_url: https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
+metallb_ippool_range: 192.168.2.190-192.168.2.199
+MetalLB_pool_ips:
+  - 192.168.2.190/24
+  - 192.168.2.191/24
+  - 192.168.2.192/24
+  - 192.168.2.193/24
+  - 192.168.2.194/24
+  - 192.168.2.195/24
+  - 192.168.2.196/24
+  - 192.168.2.197/24
+  - 192.168.2.198/24
+  - 192.168.2.199/24
+worker_node_count: "{{ groups['Kubernetes_workers'] | length }}"

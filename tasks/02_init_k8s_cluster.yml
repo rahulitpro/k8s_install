@@ -1,0 +1,91 @@
+---
+
+- name: Run kubeadm init
+  become: true
+  shell: kubeadm init --control-plane-endpoint="{{ ansible_default_ipv4.address }}" --node-name "{{ ansible_fqdn }}" --pod-network-cidr=10.244.0.0/16
+  args:
+    creates: /etc/kubernetes/admin.conf
+  when: hostvars['variable_holder']['kubelet_service_status'] is success
+  register: kubeadm_init_status
+  until: kubeadm_init_status is success
+
+- name: Create .kube directory
+  file:
+    path: /home/{{ ansible_user }}/.kube
+    state: directory
+    mode: '0755'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  register: kube_dir
+  until: kube_dir is success
+
+- name: Copy kubeadm config to User Home
+  become: true
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/{{ ansible_user }}/.kube/config
+    remote_src: yes
+  when: kubeadm_init_status is changed
+  register: kubeadm_config_copy_status
+  until: kubeadm_config_copy_status is success
+
+- name: Confirm if kubernetes is running
+  shell: kubectl get pods -A  | grep 'Running' | grep -c '1/1'
+  register: kubectl_status
+  until: kubectl_status.stdout|int >= 5
+  retries: 10
+  delay: 10
+  changed_when: false
+
+- name: Check if flannel is installed already
+  shell: kubectl get pods -A | egrep 'kube-flannel|coredns'  | grep 'Running' | grep -c '1/1'
+  register: flannel_check
+  failed_when: flannel_check.rc not in [0, 1]
+  changed_when: false
+
+- name: Initiate Flannel CNI
+  shell: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/refs/heads/master/Documentation/kube-flannel.yml
+  when: flannel_check.stdout|int < 3
+  register: flannel_apply
+  until: flannel_apply is success
+
+- name: Confirm if Flannel CNI is running
+  shell: kubectl get pods -A | egrep 'kube-flannel|coredns'  | grep 'Running' | grep -c '1/1'
+  when: flannel_apply is success
+  register: flannel_status
+  until: flannel_status.stdout|int >= 3
+  retries: 10
+  delay: 10
+  changed_when: false
+
+- name: Check if Master node is tainted
+  shell: kubectl get nodes -o jsonpath='{.items[?(@.metadata.name=="{{ ansible_fqdn }}")].spec.taints[0].effect}'
+  when: flannel_status.stdout|int >= 3
+  register: taint_check
+  changed_when: false
+
+- name: Get master node role
+  shell: kubectl describe node {{ ansible_fqdn }}| grep Taints | awk -F ':' '{print $2}' | awk '{print $1}'
+  when: taint_check is success
+  register: master_role
+  until: master_role is success
+  changed_when: false
+
+- name: Allow scheduling on master node
+  shell: kubectl taint nodes  {{ ansible_fqdn }} {{ master_role.stdout }}:NoSchedule-
+  when: taint_check.stdout == 'NoSchedule'
+  register: taint_status
+  until: taint_status is success
+
+- name: Get the join command
+  shell: kubeadm token create --print-join-command
+  when: taint_status is success
+  register: join_command
+  changed_when: false
+
+- name: add variables to dummy host to pass to next task
+  add_host:
+    name: "variable_holder"
+    join_command:  "{{ join_command }}"
+  changed_when: false
+  when: join_command is success
