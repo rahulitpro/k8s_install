@@ -30,3 +30,4 @@ MetalLB_pool_ips:
   - 192.168.2.198/24
   - 192.168.2.199/24
 worker_node_count: "{{ groups['Kubernetes_workers'] | length }}"
+helm_install_url: https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3

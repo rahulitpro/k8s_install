@@ -8,3 +8,10 @@
   retries: 10
   delay: 10
   changed_when: false
+
+- name: add variables to dummy host to pass to next task
+  add_host:
+    name: "variable_holder"
+    worker_node_status:  "{{ worker_node_status }}"
+  changed_when: false
+  when: worker_node_status is success

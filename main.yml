@@ -35,7 +35,7 @@
   - include_tasks: tasks/05_join_cluster.yml
     when: ansible_distribution == "Ubuntu"
 
-- name: Kubernetes Worker Nodes Join Confirmation
+- name: Kubernetes Worker Nodes Join Confirmation and Configure Observability
   hosts: Kubernetes_masters
   vars_files:
   - external_vars.yml
@@ -44,3 +44,7 @@
 
   - include_tasks: tasks/06_join_confirmation.yml
     when: ansible_distribution == "Ubuntu"
+
+  - include_tasks: tasks/07_configure_observability.yml
+    when: ansible_distribution == "Ubuntu"
+
